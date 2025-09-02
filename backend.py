@@ -54,7 +54,7 @@ _producer_thread: threading.Thread | None = None
 _stop_event = threading.Event()
 _step_lock = threading.Lock()
 _t_counter = 0
-_producer_delay = 0.2  # seconds between steps
+_producer_delay = 0.8  # seconds between steps
 
 
 def _ensure_queue(robot_id: int) -> Deque[StepDTO]:
@@ -164,7 +164,7 @@ def get_session(reset: bool = False):
     resp = {
         "gridX": 8,
         "gridY": 8,
-        "totalSteps": parameters['steps'],  # 👈 Dinámico desde parameters
+        "totalSteps": parameters['steps'],  #  Dinámico desde parameters
         "currentStep": _t_counter,
         "trucks": [TruckDTO(id=i, pos=truck.position, load=truck.load) for i, truck in enumerate(model.trucks)],
         "containers": [ContainerDTO(pos=c.position, fill=c.current_fill) for c in model.containers]
@@ -181,7 +181,7 @@ def get_next_step(robot_id: int = 0):
 
 @app.post("/step")
 def post_step(step: StepDTO = Body(...), robot_id: int = 0):
-    if step.t >= parameters['steps'] - 1:  # 👈 cuando llega al límite dinámico
+    if step.t >= parameters['steps'] - 1:  #  cuando llega al límite dinámico
         step.done = True
     _ensure_queue(robot_id).append(step)
     return {"ok": True}

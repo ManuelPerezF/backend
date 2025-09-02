@@ -1,3 +1,4 @@
+# agents2.py
 import agentpy as ap
 import random
 import pickle
@@ -16,6 +17,7 @@ class TrashContainerAgent(ap.Agent):
         self.generation_rate = 0
     
     def step(self):
+        # Generación de basura controlada por densidad
         if random.uniform(0, 1) < self.p.population_density:
             if self.p.population_density >= 0.3:
                 basura_generada = random.randint(2, 5)
@@ -36,7 +38,7 @@ class TrashContainerAgent(ap.Agent):
 
 
 # --------------------------
-# Trash Truck Agent
+# Trash Truck Agent (con Q-learning)
 class TrashTruckAgent(ap.Agent):
 
     def setup(self):
@@ -60,8 +62,8 @@ class TrashTruckAgent(ap.Agent):
                 with open(filename, 'rb') as f:
                     saved_data = pickle.load(f)
                     self.q_table = saved_data['q_table']
-                    # Mantener epsilon alto para seguir explorando
-                    self.epsilon = max(0.2, saved_data.get('epsilon', self.epsilon) * 0.98)  # Reducción más lenta
+                    # Mantener epsilon alto para seguir explorando (decae lento)
+                    self.epsilon = max(0.2, saved_data.get('epsilon', self.epsilon) * 0.98)
                     print(f"🔄 Camión {self.truck_id}: Q-table cargada con {len(self.q_table)} estados, epsilon={self.epsilon:.3f}")
             except Exception as e:
                 print(f"⚠️ Error cargando Q-table para camión {self.truck_id}: {e}")
@@ -70,7 +72,6 @@ class TrashTruckAgent(ap.Agent):
         """Guarda la Q-table en archivo"""
         filename = f"q_table_truck_{self.truck_id}.pkl"
         try:
-            # Leer datos previos si existen
             training_runs = 1
             if os.path.exists(filename):
                 with open(filename, 'rb') as f:
@@ -94,23 +95,23 @@ class TrashTruckAgent(ap.Agent):
         return ["up", "down", "left", "right", "collect", "change_route"]
 
     def choose_action(self, state):
-        # Prioridad 1: Si hay contenedor en la posición actual, recolectar
+        # Prioridad 1: si hay contenedor aquí y hay espacio, recolectar
         container_at_position = self.model.get_container_at_position(self.position)
         if (container_at_position and 
             container_at_position.current_fill > 0 and 
             self.load < self.capacity):
             return "collect"
         
-        # Prioridad 2: Si está lleno, buscar punto de descarga (esquinas)
-        if self.load >= self.capacity * 0.8:  # Descargar cuando esté al 80%
+        # Prioridad 2: si casi lleno, ir a descargar (esquinas)
+        if self.load >= self.capacity * 0.8:
             return self.move_to_dump()
         
-        # Prioridad 3: Ir hacia el contenedor más crítico
+        # Prioridad 3: moverse hacia el contenedor crítico más cercano
         critical_containers = self.model.get_critical_containers()
         if critical_containers:
             return self.move_to_critical(critical_containers)
         
-        # Decisión Q-Learning solo si no hay prioridades urgentes
+        # Q-learning (exploración/explotación)
         if random.uniform(0, 1) < self.epsilon:
             return random.choice(self.possible_actions())
         else:
@@ -132,22 +133,21 @@ class TrashTruckAgent(ap.Agent):
         elif y < target_y: return "up"
         elif y > target_y: return "down"
         else:
-            # En punto de descarga, descargar
-            self.load = 0  # Simular descarga
-            return "collect"  # Acción dummy
+            # En punto de descarga, vaciar carga
+            self.load = 0
+            return "collect"  # acción dummy para reforzar estado
     
     def move_to_critical(self, critical_containers):
         """Moverse hacia el contenedor crítico más cercano"""
         x, y = self.position
-        closest_critical = min(critical_containers, 
-                             key=lambda p: abs(x - p[0]) + abs(y - p[1]))
-        
+        closest_critical = min(critical_containers, key=lambda p: abs(x - p[0]) + abs(y - p[1]))
         target_x, target_y = closest_critical
         if x < target_x: return "right"
         elif x > target_x: return "left"
         elif y < target_y: return "up"
         elif y > target_y: return "down"
-        else: return "collect"
+        else:
+            return "collect"
 
     def update_q(self, state, action, reward, next_state):
         if state not in self.q_table:
@@ -171,6 +171,7 @@ class TrashTruckAgent(ap.Agent):
         next_pos = self.position
         reward = 0
 
+        # Movimiento dentro del grid 8x8
         if action == "up" and y < 7:
             next_pos = (x, y + 1)
         elif action == "down" and y > 0:
@@ -180,56 +181,50 @@ class TrashTruckAgent(ap.Agent):
         elif action == "right" and x < 7:
             next_pos = (x + 1, y)
 
+        # Recompensa por acercarse a críticos
         critical_containers = self.model.get_critical_containers()
         if critical_containers:
             dist_before = min(abs(x - pos[0]) + abs(y - pos[1]) for pos in critical_containers)
-            dist_after = min(abs(next_pos[0] - pos[0]) + abs(next_pos[1] - pos[1]) for pos in critical_containers)
-
+            dist_after  = min(abs(next_pos[0] - pos[0]) + abs(next_pos[1] - pos[1]) for pos in critical_containers)
             if dist_after < dist_before:
-                reward += 2  # Recompensa por acercarse a contenedores críticos
+                reward += 2
 
+        # Recolectar
         if action == "collect":
             container_at_position = self.model.get_container_at_position(self.position)
             if container_at_position and self.load < self.capacity:
                 if container_at_position.current_fill > 0:
                     truck_space = self.capacity - self.load
-                    amount_to_collect = min(container_at_position.current_fill, truck_space, 10)  # Recolecta más por acción
+                    amount_to_collect = min(container_at_position.current_fill, truck_space, 10)
                     collected = container_at_position.collect_trash(amount_to_collect)
-                    reward += 30 * collected  # Mayor recompensa por recolectar
+                    reward += 30 * collected
                     if container_at_position.is_critical():
-                        reward += 100 * collected  # Mucha mayor recompensa por contenedores críticos
+                        reward += 100 * collected
                     self.load += collected
                 else:
-                    reward -= 2  # Menor penalización
+                    reward -= 2
             else:
-                reward -= 2  # Menor penalización
+                reward -= 2
 
+        # Redirección rápida hacia crítico
         if action == "change_route":
             critical_containers = self.model.get_critical_containers()
             if critical_containers:
-                current_x, current_y = self.position
-                closest_critical = min(
-                    critical_containers, 
-                    key=lambda pos: abs(current_x - pos[0]) + abs(current_y - pos[1])
-                )
-                target_x, target_y = closest_critical
-                if current_x < target_x and current_x < 7:
-                    next_pos = (current_x + 1, current_y)
-                elif current_x > target_x and current_x > 0:
-                    next_pos = (current_x - 1, current_y)
-                elif current_y < target_y and current_y < 7:
-                    next_pos = (current_x, current_y + 1)
-                elif current_y > target_y and current_y > 0:
-                    next_pos = (current_x, current_y - 1)
+                cx, cy = self.position
+                tx, ty = min(critical_containers, key=lambda pos: abs(cx - pos[0]) + abs(cy - pos[1]))
+                if cx < tx and cx < 7:   next_pos = (cx + 1, cy)
+                elif cx > tx and cx > 0: next_pos = (cx - 1, cy)
+                elif cy < ty and cy < 7: next_pos = (cx, cy + 1)
+                elif cy > ty and cy > 0: next_pos = (cx, cy - 1)
                 reward += 10
             else:
                 reward -= 2
 
+        # Penalizaciones suaves
         if self.load >= self.capacity:
-            reward -= 20  # Menor penalización por estar lleno
-
+            reward -= 20
         overflowing_containers = self.model.get_overflowing_containers()
-        reward -= 30 * len(overflowing_containers)  # Menor penalización por overflow
+        reward -= 30 * len(overflowing_containers)
 
         self.position = next_pos
         return reward, self.state()
@@ -242,16 +237,19 @@ class GarbageEnvironment(ap.Model):
     def setup(self):
         self.grid = ap.Grid(self, (8, 8), track_empty=True)
 
-        # Contenedores fijos y más separados
-        container_positions = [(1, 1), (6, 1), (2, 5), (5, 6), (3, 3)]
+        # ✅ 8 contenedores distribuidos (puedes cambiarlos si tu mapa lo requiere)
+        container_positions = [
+            (1, 1), (6, 1), (2, 5), (5, 6),
+            (3, 3), (6, 5), (1, 6), (4, 2)
+        ]
         self.containers = ap.AgentList(self, len(container_positions), TrashContainerAgent)
         for container, pos in zip(self.containers, container_positions):
             container.position = pos
             container.current_fill = random.randint(5, 20)
 
-        # Camiones fijos en esquinas más separadas
-        start_positions = [(0, 0), (7, 0), (0, 7)]
-        self.trucks = ap.AgentList(self, 3, TrashTruckAgent)
+        # ✅ SOLO 2 camiones (esquinas opuestas para cubrir la ciudad)
+        start_positions = [(0, 0), (7, 7)]
+        self.trucks = ap.AgentList(self, 2, TrashTruckAgent)
         for i, (truck, pos) in enumerate(zip(self.trucks, start_positions)):
             truck.position = pos
             truck.truck_id = i  # Asignar ID único
@@ -280,40 +278,41 @@ class GarbageEnvironment(ap.Model):
         for truck in self.trucks:
             truck.save_q_table()
         
-        # Mostrar estadísticas finales
-        total_trash_generated = sum(c.current_fill for c in self.containers)
+        # Estadísticas
+        total_trash_remaining = sum(c.current_fill for c in self.containers)
         total_collected = sum(t.load for t in self.trucks)
-        efficiency = (total_collected / max(1, total_trash_generated + total_collected)) * 100
+        efficiency = (total_collected / max(1, total_trash_remaining + total_collected)) * 100
         
         print(f"\n🎯 RESULTADOS FINALES:")
         print(f"   • Eficiencia de recolección: {efficiency:.1f}%")
         print(f"   • Basura recolectada: {total_collected} unidades")
-        print(f"   • Basura restante: {total_trash_generated} unidades")
+        print(f"   • Basura restante en contenedores: {total_trash_remaining} unidades")
         print(f"   • Estados aprendidos por camión: {[len(t.q_table) for t in self.trucks]}")
         print(f"   • Epsilon final por camión: {[f'{t.epsilon:.3f}' for t in self.trucks]}")
         print(f"   • 🚀 ¡La próxima ejecución será más eficiente!")
-        
         return efficiency
 
 
 # --------------------------
-# Ejecutar simulación - CONFIGURACIONES PARA APRENDIZAJE PROGRESIVO
+# Parámetros del modelo (usados por el backend)
 parameters = {
-    'steps': 50,      # Menos pasos para entrenamientos más frecuentes
-    'capacity': 35,      # Capacidad moderada
-    'epsilon': 0.3,      # Exploración moderada pero constante
-    'alpha': 0.15,       # Aprendizaje moderado para evitar sobreajuste
-    'gamma': 0.9,        # No tan enfocado en el futuro
-    'container_limit': 30, # Contenedores medianos
-    'population_density': 0.2  # Generación moderada
+    'steps': 1000,            # pasos por episodio
+    'capacity': 35,         # capacidad de cada camión
+    'epsilon': 0.3,         # exploración
+    'alpha': 0.15,          # tasa de aprendizaje
+    'gamma': 0.9,           # descuento futuro
+    'container_limit': 30,  # capacidad de contenedores
+    'population_density': 0.2
 }
 
+
+# --------------------------
+# Visualización local opcional
 def realtime_simulation(model, steps=20, delay=0.5):
     plt.ion()
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
     
     for step in range(steps):
-        # Gráfico principal de simulación
         ax1.clear()
         ax1.grid(True)
         ax1.set_xlim(-0.5, 7.5)
@@ -322,7 +321,7 @@ def realtime_simulation(model, steps=20, delay=0.5):
         ax1.set_yticks(range(8))
         ax1.set_title(f"Simulación de Basura - Paso {step}")
         
-        # Contenedores con más información
+        # Contenedores
         critical_count = 0
         overflow_count = 0
         total_trash = 0
@@ -337,68 +336,55 @@ def realtime_simulation(model, steps=20, delay=0.5):
             ax1.text(x, y+0.15, f"{c.current_fill}/{c.capacity}", ha='center', fontsize=7, weight='bold')
             ax1.text(x, y-0.3, f"C{i}", ha='center', fontsize=6, color='black')
         
-        # Camiones con trayectorias y estado de entrenamiento
+        # Camiones
         active_trucks = 0
         total_load = 0
         for i, t in enumerate(model.trucks):
             x, y = t.position
             total_load += t.load
             
-            # Color basado en el entrenamiento (epsilon y tamaño de Q-table)
             q_size = len(t.q_table)
-            if q_size > 50:
-                truck_color = 'darkblue'  # Bien entrenado
-            elif q_size > 20:
-                truck_color = 'blue'      # Moderadamente entrenado
-            else:
-                truck_color = 'lightblue' # Poco entrenado
+            truck_color = 'lightblue'
+            if q_size > 50:   truck_color = 'darkblue'
+            elif q_size > 20: truck_color = 'blue'
             
-            if t.load > 0 or any(t.position != start for start in [(0,0), (7,0), (0,7)]):
+            # cuenta activos si ya se movió o lleva carga
+            if t.load > 0 or t.position not in [(0,0), (7,7)]:
                 active_trucks += 1
                 
             ax1.scatter(x, y, s=250, c=truck_color, marker='o', edgecolors='black', alpha=0.9)
             ax1.text(x, y-0.35, f"{t.load}", ha='center', fontsize=8, color='white', weight='bold')
             ax1.text(x+0.3, y+0.3, f"T{i}", ha='center', fontsize=6, color='black')
-            
-            # Mostrar epsilon (exploración vs explotación)
             ax1.text(x+0.3, y-0.3, f"ε:{t.epsilon:.2f}", ha='center', fontsize=5, color='purple')
         
-        # Panel de estadísticas detalladas
+        # Panel lateral
         ax2.clear()
         ax2.axis('off')
         ax2.set_title("Estadísticas de Entrenamiento", fontsize=12, weight='bold')
         
+        n_trucks = len(model.trucks)
+        n_conts = len(model.containers)
         stats_text = f"""
 ESTADO DE LA SIMULACIÓN (Paso {step})
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 🚛 CAMIONES:
-  • Activos: {active_trucks}/3
+  • Activos: {active_trucks}/{n_trucks}
   • Carga total: {total_load}
-  • Capacidad total: {3 * model.trucks[0].capacity}
+  • Capacidad total: {n_trucks * model.trucks[0].capacity}
 
 📦 CONTENEDORES:
-  • Críticos: {critical_count}/5
-  • Desbordados: {overflow_count}/5
-  • Basura total: {total_trash}
-
-🧠 ENTRENAMIENTO POR CAMIÓN:
+  • Críticos: {critical_count}/{n_conts}
+  • Desbordados: {overflow_count}/{n_conts}
+  • Basura total (visible): {total_trash}
 """
-        
         for i, truck in enumerate(model.trucks):
             q_size = len(truck.q_table)
-            avg_q = sum(sum(actions.values()) for actions in truck.q_table.values()) / max(1, q_size * 6) if q_size > 0 else 0
-            
-            # Determinar nivel de entrenamiento
-            if q_size > 50:
-                level = "🟢 EXPERTO"
-            elif q_size > 20:
-                level = "🟡 INTERMEDIO"
-            elif q_size > 5:
-                level = "🟠 NOVATO"
-            else:
-                level = "🔴 SIN ENTRENAR"
-                
+            avg_q = (sum(sum(actions.values()) for actions in truck.q_table.values()) / 
+                     max(1, q_size * 6)) if q_size > 0 else 0
+            if q_size > 50:   level = "🟢 EXPERTO"
+            elif q_size > 20: level = "🟡 INTERMEDIO"
+            elif q_size > 5:  level = "🟠 NOVATO"
+            else:             level = "🔴 SIN ENTRENAR"
             stats_text += f"""
 Camión {i} ({level}):
   • Q-Table: {q_size} estados
@@ -407,31 +393,8 @@ Camión {i} ({level}):
   • Posición: {truck.position}
   • Carga: {truck.load}/{truck.capacity}
 """
-        
-        # Explicación del comportamiento
-        stats_text += f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔍 ANÁLISIS:
-• Solo {active_trucks} camiones se mueven porque los
-  algoritmos Q-Learning necesitan explorar.
-• Epsilon alto = más exploración aleatoria
-• Q-Table pequeña = poco entrenamiento
-• Los camiones aprenden gradualmente qué 
-  acciones tomar en cada situación.
-"""
-        
         ax2.text(0.05, 0.95, stats_text, transform=ax2.transAxes, fontsize=8, 
-                verticalalignment='top', fontfamily='monospace')
-        
-        # Leyenda mejorada
-        handles = [
-            plt.Line2D([0], [0], marker='s', color='w', label='Contenedor Normal', markerfacecolor='green', markersize=10, markeredgecolor='black'),
-            plt.Line2D([0], [0], marker='s', color='w', label='Contenedor Crítico', markerfacecolor='red', markersize=10, markeredgecolor='black'),
-            plt.Line2D([0], [0], marker='s', color='w', label='Contenedor Desbordado', markerfacecolor='orange', markersize=10, markeredgecolor='black'),
-            plt.Line2D([0], [0], marker='o', color='w', label='Camión Experto', markerfacecolor='darkblue', markersize=10, markeredgecolor='black'),
-            plt.Line2D([0], [0], marker='o', color='w', label='Camión Novato', markerfacecolor='lightblue', markersize=10, markeredgecolor='black'),
-        ]
-        ax1.legend(handles=handles, loc='upper left', fontsize=8)
+                 verticalalignment='top', fontfamily='monospace')
         
         plt.tight_layout()
         plt.pause(delay)
@@ -439,118 +402,17 @@ Camión {i} ({level}):
     plt.ioff()
     plt.close(fig)
 
-# Ejemplo de uso en tiempo real:
-if __name__ == "__main__":
-    model = GarbageEnvironment(parameters)
-    model.setup()  # <-- Esto inicializa los agentes
-    realtime_simulation(model, steps=20, delay=0.5)
 
-    print("=" * 80)
-    print("🚛 RESULTADOS DE LA SIMULACIÓN - SISTEMA DE RECOLECCIÓN DE BASURA")
-    print("=" * 80)
-
-    print(f"\n📊 PARÁMETROS DE LA SIMULACIÓN:")
-    print(f"   • Pasos ejecutados: {parameters['steps']}")
-    print(f"   • Capacidad de camiones: {parameters['capacity']} unidades")
-    print(f"   • Número de camiones: {len(model.trucks)}")
-    print(f"   • Número de contenedores: {len(model.containers)}")
-    print(f"   • Límite por contenedor: {parameters['container_limit']} unidades")
-    print(f"   • Densidad de población: {parameters['population_density']*100}%")
-
-    print(f"\n🚛 ESTADO FINAL DE LOS CAMIONES:")
-    print("-" * 50)
-    for i, truck in enumerate(model.trucks):
-        print(f"Camión #{i+1}:")
-        print(f"   • Posición final: {truck.position}")
-        print(f"   • Carga actual: {truck.load}/{truck.capacity} unidades")
-        print(f"   • Estados aprendidos: {len(truck.q_table)} configuraciones")
-        
-        # Mostrar las mejores acciones aprendidas
-        if truck.q_table:
-            print(f"   • Top 3 estrategias aprendidas:")
-            top_strategies = sorted(
-                [(state, max(actions.items(), key=lambda x: x[1])) 
-                for state, actions in truck.q_table.items()],
-                key=lambda x: x[1][1], reverse=True
-            )[:3]  # Top 3 estrategias
-            
-            for j, (state, (best_action, value)) in enumerate(top_strategies, 1):
-                pos, load = state
-                print(f"      {j}. En posición {pos} con carga {load}: '{best_action}' (valor: {value:.2f})")
-        print()
-
-    print(f"🗑️ ESTADO FINAL DE LOS CONTENEDORES:")
-    print("-" * 50)
-    total_basura = 0
-    contenedores_criticos = 0
-
-    for container in model.containers:
-        total_basura += container.current_fill
-        status = ""
-        if container.current_fill >= parameters['container_limit']:
-            status = " ⚠️ DESBORDADO"
-            contenedores_criticos += 1
-        elif container.current_fill >= 0.9 * parameters['container_limit']:
-            status = " 🔴 CRÍTICO"
-            contenedores_criticos += 1
-        elif container.current_fill >= 0.7 * parameters['container_limit']:
-            status = " 🟡 MEDIO"
-        else:
-            status = " 🟢 OK"
-        
-        porcentaje = (container.current_fill / parameters['container_limit']) * 100
-        print(f"   Contenedor en {container.position}: {container.current_fill:2d}/{parameters['container_limit']} unidades ({porcentaje:5.1f}%){status}")
-
-    print(f"\n📈 RESUMEN GENERAL:")
-    print("-" * 50)
-    basura_inicial = model.initial_trash  # Basura inicial dinámica
-    basura_actual_contenedores = total_basura
-    basura_recolectada = sum(truck.load for truck in model.trucks)
-    basura_generada = basura_actual_contenedores + basura_recolectada - basura_inicial
-
-    print(f"   • Basura inicial en contenedores: {basura_inicial} unidades")
-    print(f"   • Basura generada durante simulación: {basura_generada} unidades")
-    print(f"   • Total de basura en contenedores: {basura_actual_contenedores} unidades")
-    print(f"   • Contenedores en estado crítico: {contenedores_criticos}/{len(model.containers)}")
-    print(f"   • Basura recolectada por camiones: {basura_recolectada} unidades")
-
-    total_basura_sistema = basura_actual_contenedores + basura_recolectada
-    eficiencia = (basura_recolectada / total_basura_sistema) * 100 if total_basura_sistema > 0 else 0
-
-    print(f"   • Eficiencia de recolección: {eficiencia:.1f}%")
-    print(f"   • Promedio de recolección por camión: {basura_recolectada/len(model.trucks):.1f} unidades")
-
-    if contenedores_criticos > 0:
-        print("\n⚠️  ALERTA: Hay contenedores en estado crítico que requieren atención inmediata!")
-    else:
-        print("\n✅ Sistema funcionando correctamente - Todos los contenedores bajo control")
-
-    print("=" * 80)
-
-
-# Función principal con aprendizaje persistente
+# --------------------------
+# Entrenamiento local opcional
 if __name__ == "__main__":
     print("🚛 INICIANDO SIMULACIÓN DE RECOLECCIÓN DE BASURA")
-    print("=" * 60)
-    
-    # Verificar si hay Q-tables previas
-    existing_files = [f for f in os.listdir('.') if f.startswith('q_table_truck_') and f.endswith('.pkl')]
-    if existing_files:
-        print(f"📚 Encontradas {len(existing_files)} Q-tables previas - continuando aprendizaje...")
-    else:
-        print("🆕 Primera ejecución - iniciando aprendizaje desde cero...")
-    
     model = GarbageEnvironment(parameters)
-    print(f"🎮 Simulación configurada: {parameters['steps']} pasos, 3 camiones, 5 contenedores")
-    
-    # Ejecutar con visualización opcional
-    import sys
+    print(f"🎮 Simulación configurada: {parameters['steps']} pasos, {2} camiones, {8} contenedores")
+    # Visual (usar --visual) o entrenamiento rápido
     if len(sys.argv) > 1 and sys.argv[1] == "--visual":
-        print("🎬 Modo visual activado")
+        model.setup()
         realtime_simulation(model, steps=50, delay=0.3)
     else:
-        print("⚡ Ejecutando entrenamiento rápido (usa 'python agents2.py --visual' para ver animación)")
         results = model.run()
-        
-    print("\n✅ Simulación completada. ¡Ejecuta de nuevo para ver mejores resultados!")
-
+    print("\n✅ Simulación completada.")
