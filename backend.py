@@ -8,11 +8,9 @@ import time
 
 from agents2 import GarbageEnvironment, parameters
 
-# ---- Modelo y parámetros ----
 model = GarbageEnvironment(parameters)
 model.setup()
 
-# TOTAL_STEPS ahora se obtiene dinámicamente de los parámetros actuales
 
 # ---- FastAPI ----
 app = FastAPI()

@@ -1,4 +1,3 @@
-# agents2.py
 import agentpy as ap
 import random
 import pickle
@@ -7,13 +6,12 @@ import matplotlib.pyplot as plt
 import time
 import sys
 
-# --------------------------
-# Trash Container Agent
+
 class TrashContainerAgent(ap.Agent):
     def setup(self):
         self.position = None
         self.capacity = self.p.container_limit
-        self.current_fill = 0
+        self.current_fill = 0   
         self.generation_rate = 0
     
     def step(self):
@@ -37,10 +35,7 @@ class TrashContainerAgent(ap.Agent):
         return self.current_fill >= self.capacity
 
 
-# --------------------------
-# Trash Truck Agent (con Q-learning)
 class TrashTruckAgent(ap.Agent):
-
     def setup(self):
         self.capacity = self.p.capacity
         self.load = 0
@@ -49,13 +44,10 @@ class TrashTruckAgent(ap.Agent):
         self.epsilon = self.p.epsilon
         self.alpha = self.p.alpha
         self.gamma = self.p.gamma
-        self.truck_id = 0  # Se asignará en el modelo
+        self.truck_id = 0  # 
         
-        # Cargar Q-table si existe
-        self.load_q_table()
-
     def load_q_table(self):
-        """Carga la Q-table desde archivo si existe"""
+        # Carga la Q-table desde archivo si existe
         filename = f"q_table_truck_{self.truck_id}.pkl"
         if os.path.exists(filename):
             try:
@@ -64,12 +56,11 @@ class TrashTruckAgent(ap.Agent):
                     self.q_table = saved_data['q_table']
                     # Mantener epsilon alto para seguir explorando (decae lento)
                     self.epsilon = max(0.2, saved_data.get('epsilon', self.epsilon) * 0.98)
-                    print(f"🔄 Camión {self.truck_id}: Q-table cargada con {len(self.q_table)} estados, epsilon={self.epsilon:.3f}")
+                    # print(f"Camión {self.truck_id}: Q-table cargada con {len(self.q_table)} estados, epsilon={self.epsilon:.3f}")
             except Exception as e:
-                print(f"⚠️ Error cargando Q-table para camión {self.truck_id}: {e}")
+                print(f"Error cargando Q-table para camión {self.truck_id}: {e}")
                 
     def save_q_table(self):
-        """Guarda la Q-table en archivo"""
         filename = f"q_table_truck_{self.truck_id}.pkl"
         try:
             training_runs = 1
@@ -84,9 +75,8 @@ class TrashTruckAgent(ap.Agent):
                     'epsilon': self.epsilon,
                     'training_runs': training_runs
                 }, f)
-            print(f"💾 Camión {self.truck_id}: Q-table guardada con {len(self.q_table)} estados (ejecución #{training_runs})")
         except Exception as e:
-            print(f"⚠️ Error guardando Q-table para camión {self.truck_id}: {e}")
+            print(f"Error guardando Q-table para camión {self.truck_id}: {e}")
 
     def state(self):
         return (self.position, self.load)
@@ -95,14 +85,14 @@ class TrashTruckAgent(ap.Agent):
         return ["up", "down", "left", "right", "collect", "change_route"]
 
     def choose_action(self, state):
-        # Prioridad 1: si hay contenedor aquí y hay espacio, recolectar
+        # Prioridad 1: si hay contenedor cerca y hay espacio, recolectar
         container_at_position = self.model.get_container_at_position(self.position)
         if (container_at_position and 
             container_at_position.current_fill > 0 and 
             self.load < self.capacity):
             return "collect"
         
-        # Prioridad 2: si casi lleno, ir a descargar (esquinas)
+        # Prioridad 2: si casi lleno, ir a descargar 
         if self.load >= self.capacity * 0.8:
             return self.move_to_dump()
         
@@ -111,7 +101,7 @@ class TrashTruckAgent(ap.Agent):
         if critical_containers:
             return self.move_to_critical(critical_containers)
         
-        # Q-learning (exploración/explotación)
+        # Q-learning 
         if random.uniform(0, 1) < self.epsilon:
             return random.choice(self.possible_actions())
         else:
@@ -121,8 +111,9 @@ class TrashTruckAgent(ap.Agent):
                 default=random.choice(self.possible_actions())
             )
     
+
+    # Funcion para moverse hacia el punto de descarga
     def move_to_dump(self):
-        """Moverse hacia el punto de descarga más cercano (esquinas)"""
         x, y = self.position
         dump_points = [(0, 0), (7, 0), (0, 7), (7, 7)]
         closest_dump = min(dump_points, key=lambda p: abs(x - p[0]) + abs(y - p[1]))
@@ -135,10 +126,11 @@ class TrashTruckAgent(ap.Agent):
         else:
             # En punto de descarga, vaciar carga
             self.load = 0
-            return "collect"  # acción dummy para reforzar estado
-    
+            return "collect"
+
+
+    # Funcion para moverse hacia el contenedor crítico más cercano
     def move_to_critical(self, critical_containers):
-        """Moverse hacia el contenedor crítico más cercano"""
         x, y = self.position
         closest_critical = min(critical_containers, key=lambda p: abs(x - p[0]) + abs(y - p[1]))
         target_x, target_y = closest_critical
@@ -206,7 +198,7 @@ class TrashTruckAgent(ap.Agent):
             else:
                 reward -= 2
 
-        # Redirección rápida hacia crítico
+        # Cambio de ruta
         if action == "change_route":
             critical_containers = self.model.get_critical_containers()
             if critical_containers:
@@ -220,7 +212,7 @@ class TrashTruckAgent(ap.Agent):
             else:
                 reward -= 2
 
-        # Penalizaciones suaves
+        # Penalizaciones por capacidad
         if self.load >= self.capacity:
             reward -= 20
         overflowing_containers = self.model.get_overflowing_containers()
@@ -230,14 +222,11 @@ class TrashTruckAgent(ap.Agent):
         return reward, self.state()
 
 
-# --------------------------
-# Garbage Environment (Modelo del entorno)
 class GarbageEnvironment(ap.Model):
-
     def setup(self):
         self.grid = ap.Grid(self, (8, 8), track_empty=True)
 
-        # ✅ 8 contenedores distribuidos (puedes cambiarlos si tu mapa lo requiere)
+        # Posiciones de los contenedores
         container_positions = [
             (1, 1), (6, 1), (2, 5), (5, 6),
             (3, 3), (6, 5), (1, 6), (4, 2)
@@ -247,12 +236,13 @@ class GarbageEnvironment(ap.Model):
             container.position = pos
             container.current_fill = random.randint(5, 20)
 
-        # ✅ SOLO 2 camiones (esquinas opuestas para cubrir la ciudad)
+        # Solo 2 camiones
         start_positions = [(0, 0), (7, 7)]
         self.trucks = ap.AgentList(self, 2, TrashTruckAgent)
         for i, (truck, pos) in enumerate(zip(self.trucks, start_positions)):
             truck.position = pos
-            truck.truck_id = i  # Asignar ID único
+            truck.truck_id = i  
+            truck.load_q_table() 
 
         # Basura inicial
         self.initial_trash = sum(container.current_fill for container in self.containers)
@@ -274,145 +264,60 @@ class GarbageEnvironment(ap.Model):
         return [container.position for container in self.containers if container.is_overflowing()]
 
     def end(self):
-        # Guardar Q-tables al final de la simulación
+        # Guardar las tablas Q de cada camión
         for truck in self.trucks:
             truck.save_q_table()
         
-        # Estadísticas
+        # Mostrar estadísticas separadas por camión
+        show_truck_stats(self)
+        
+        # Calcular estadísticas básicas  
         total_trash_remaining = sum(c.current_fill for c in self.containers)
         total_collected = sum(t.load for t in self.trucks)
         efficiency = (total_collected / max(1, total_trash_remaining + total_collected)) * 100
         
-        print(f"\n🎯 RESULTADOS FINALES:")
-        print(f"   • Eficiencia de recolección: {efficiency:.1f}%")
-        print(f"   • Basura recolectada: {total_collected} unidades")
-        print(f"   • Basura restante en contenedores: {total_trash_remaining} unidades")
-        print(f"   • Estados aprendidos por camión: {[len(t.q_table) for t in self.trucks]}")
-        print(f"   • Epsilon final por camión: {[f'{t.epsilon:.3f}' for t in self.trucks]}")
-        print(f"   • 🚀 ¡La próxima ejecución será más eficiente!")
+        # Mostrar resultado simple
+        print(f"\nEficiencia final: {efficiency:.1f}% - {total_collected} unidades recolectadas")
         return efficiency
 
 
-# --------------------------
-# Parámetros del modelo (usados por el backend)
 parameters = {
-    'steps': 1000,            # pasos por episodio
-    'capacity': 35,         # capacidad de cada camión
+    'steps': 100,          
+    'capacity': 350,       
     'epsilon': 0.3,         # exploración
     'alpha': 0.15,          # tasa de aprendizaje
     'gamma': 0.9,           # descuento futuro
-    'container_limit': 30,  # capacidad de contenedores
+    'container_limit': 30,  
     'population_density': 0.2
 }
 
 
-# --------------------------
-# Visualización local opcional
-def realtime_simulation(model, steps=20, delay=0.5):
-    plt.ion()
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+
+def simple_status(model):
+    critical = sum(1 for c in model.containers if c.is_critical())
+    overflow = sum(1 for c in model.containers if c.is_overflowing())
+    total_trash = sum(c.current_fill for c in model.containers)
+    total_load = sum(t.load for t in model.trucks)
     
-    for step in range(steps):
-        ax1.clear()
-        ax1.grid(True)
-        ax1.set_xlim(-0.5, 7.5)
-        ax1.set_ylim(-0.5, 7.5)
-        ax1.set_xticks(range(8))
-        ax1.set_yticks(range(8))
-        ax1.set_title(f"Simulación de Basura - Paso {step}")
-        
-        # Contenedores
-        critical_count = 0
-        overflow_count = 0
-        total_trash = 0
-        for i, c in enumerate(model.containers):
-            x, y = c.position
-            color = 'red' if c.is_critical() else ('orange' if c.is_overflowing() else 'green')
-            if c.is_critical(): critical_count += 1
-            if c.is_overflowing(): overflow_count += 1
-            total_trash += c.current_fill
-            
-            ax1.scatter(x, y, s=300, c=color, marker='s', edgecolors='black', alpha=0.8)
-            ax1.text(x, y+0.15, f"{c.current_fill}/{c.capacity}", ha='center', fontsize=7, weight='bold')
-            ax1.text(x, y-0.3, f"C{i}", ha='center', fontsize=6, color='black')
-        
-        # Camiones
-        active_trucks = 0
-        total_load = 0
-        for i, t in enumerate(model.trucks):
-            x, y = t.position
-            total_load += t.load
-            
-            q_size = len(t.q_table)
-            truck_color = 'lightblue'
-            if q_size > 50:   truck_color = 'darkblue'
-            elif q_size > 20: truck_color = 'blue'
-            
-            # cuenta activos si ya se movió o lleva carga
-            if t.load > 0 or t.position not in [(0,0), (7,7)]:
-                active_trucks += 1
-                
-            ax1.scatter(x, y, s=250, c=truck_color, marker='o', edgecolors='black', alpha=0.9)
-            ax1.text(x, y-0.35, f"{t.load}", ha='center', fontsize=8, color='white', weight='bold')
-            ax1.text(x+0.3, y+0.3, f"T{i}", ha='center', fontsize=6, color='black')
-            ax1.text(x+0.3, y-0.3, f"ε:{t.epsilon:.2f}", ha='center', fontsize=5, color='purple')
-        
-        # Panel lateral
-        ax2.clear()
-        ax2.axis('off')
-        ax2.set_title("Estadísticas de Entrenamiento", fontsize=12, weight='bold')
-        
-        n_trucks = len(model.trucks)
-        n_conts = len(model.containers)
-        stats_text = f"""
-ESTADO DE LA SIMULACIÓN (Paso {step})
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🚛 CAMIONES:
-  • Activos: {active_trucks}/{n_trucks}
-  • Carga total: {total_load}
-  • Capacidad total: {n_trucks * model.trucks[0].capacity}
-
-📦 CONTENEDORES:
-  • Críticos: {critical_count}/{n_conts}
-  • Desbordados: {overflow_count}/{n_conts}
-  • Basura total (visible): {total_trash}
-"""
-        for i, truck in enumerate(model.trucks):
-            q_size = len(truck.q_table)
-            avg_q = (sum(sum(actions.values()) for actions in truck.q_table.values()) / 
-                     max(1, q_size * 6)) if q_size > 0 else 0
-            if q_size > 50:   level = "🟢 EXPERTO"
-            elif q_size > 20: level = "🟡 INTERMEDIO"
-            elif q_size > 5:  level = "🟠 NOVATO"
-            else:             level = "🔴 SIN ENTRENAR"
-            stats_text += f"""
-Camión {i} ({level}):
-  • Q-Table: {q_size} estados
-  • Q-valor promedio: {avg_q:.2f}
-  • Epsilon: {truck.epsilon:.3f}
-  • Posición: {truck.position}
-  • Carga: {truck.load}/{truck.capacity}
-"""
-        ax2.text(0.05, 0.95, stats_text, transform=ax2.transAxes, fontsize=8, 
-                 verticalalignment='top', fontfamily='monospace')
-        
-        plt.tight_layout()
-        plt.pause(delay)
-        model.step()
-    plt.ioff()
-    plt.close(fig)
+    print(f"Críticos: {critical}, Desbordados: {overflow}, Basura: {total_trash}, Carga: {total_load}")
 
 
-# --------------------------
-# Entrenamiento local opcional
+def show_truck_stats(model):
+    """Muestra estadísticas separadas por camión"""
+    print("\n--- Estadísticas por Camión ---")
+    for i, truck in enumerate(model.trucks):
+        efficiency = (truck.load / truck.capacity) * 100
+        print(f"Camión {i}: Basura={truck.load}/{truck.capacity} ({efficiency:.1f}%) | Estados Q={len(truck.q_table)} | Posición={truck.position}")
+    
+    total_collected = sum(t.load for t in model.trucks)
+    total_remaining = sum(c.current_fill for c in model.containers)
+    overall_efficiency = (total_collected / max(1, total_collected + total_remaining)) * 100
+
+
 if __name__ == "__main__":
-    print("🚛 INICIANDO SIMULACIÓN DE RECOLECCIÓN DE BASURA")
+    print("Iniciando simulación")
     model = GarbageEnvironment(parameters)
-    print(f"🎮 Simulación configurada: {parameters['steps']} pasos, {2} camiones, {8} contenedores")
-    # Visual (usar --visual) o entrenamiento rápido
-    if len(sys.argv) > 1 and sys.argv[1] == "--visual":
-        model.setup()
-        realtime_simulation(model, steps=50, delay=0.3)
-    else:
-        results = model.run()
-    print("\n✅ Simulación completada.")
+    print(f"Config: {parameters['steps']} pasos, 2 camiones, 8 contenedores")
+    
+    results = model.run()
+
